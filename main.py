@@ -310,18 +310,62 @@ class UtecHaBridge:
         """Update all locks and publish their states."""
         logger.info("Updating all lock states...")
         
-        successful_updates = 0
+        # Create tasks for parallel execution
+        update_tasks = []
         for lock in self.locks:
-            if await self._update_lock_status(lock):
-                if self.mqtt_client.update_lock_state(lock):
-                    successful_updates += 1
+            # Skip if device is busy
+            if lock.is_busy:
+                logger.debug(f"Skipping {lock.name} (busy)")
+                continue
+            
+            # Create task for each lock update
+            task = asyncio.create_task(self._update_single_lock_with_publish(lock))
+            update_tasks.append((lock, task))
+        
+        if not update_tasks:
+            logger.warning("All locks are busy, skipping update")
+            return
+        
+        # Wait for all updates to complete
+        logger.info(f"Running {len(update_tasks)} lock updates in parallel...")
+        results = await asyncio.gather(*[task for _, task in update_tasks], return_exceptions=True)
+        
+        # Count successful updates
+        successful_updates = 0
+        for i, (lock, result) in enumerate(zip([lock for lock, _ in update_tasks], results)):
+            if isinstance(result, Exception):
+                logger.error(f"Failed to update {lock.name}: {result}")
+            elif result:
+                successful_updates += 1
+            else:
+                logger.warning(f"Update returned False for {lock.name}")
         
         total_locks = len(self.locks)
-        if successful_updates == total_locks:
-            logger.info(f"Successfully updated all {total_locks} locks")
+        active_locks = len(update_tasks)
+        
+        if successful_updates == active_locks:
+            logger.info(f"Successfully updated all {active_locks} active locks (total: {total_locks})")
             self.last_successful_update = time.time()
         else:
-            logger.warning(f"Updated {successful_updates}/{total_locks} locks")
+            logger.warning(f"Updated {successful_updates}/{active_locks} active locks (total: {total_locks})")
+    
+    async def _update_single_lock_with_publish(self, lock) -> bool:
+        """Update a single lock and publish its state."""
+        try:
+            # Update status
+            await lock.async_update_status()
+            logger.debug(f"Updated status for {lock.name}")
+            
+            # Publish to MQTT
+            if self.mqtt_client.update_lock_state(lock):
+                return True
+            else:
+                logger.warning(f"Failed to publish state for {lock.name}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to update {lock.name}: {e}")
+            raise  # Re-raise to be caught by gather()
     
     def _get_health_data(self) -> Dict[str, Any]:
         """Get bridge health data."""
