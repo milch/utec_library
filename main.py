@@ -24,6 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import utec
 from utec.integrations.ha_mqtt import UtecMQTTClient
 from utec.integrations.ha_constants import MQTT_TOPICS
+from utec.ble.background_scanner import BleBackgroundScanner, set_background_scanner
+from utec.config import config
 
 # Configure logging
 if os.name == 'nt':  # Windows
@@ -65,6 +67,7 @@ class UtecHaBridge:
         self.start_time = time.time()
         self.last_successful_update = 0
         self.dry_run = dry_run
+        self.background_scanner: Optional[BleBackgroundScanner] = None
         
         if self.dry_run:
             logger.warning("DRY RUN MODE - No actual lock commands will be executed!")
@@ -85,6 +88,14 @@ class UtecHaBridge:
         try:
             logger.info("Initializing U-tec library...")
             utec.setup(log_level=utec.LogLevel.INFO)
+            
+            # Initialize and start background scanner if enabled
+            if config.ble_background_scan_enabled:
+                logger.info("Starting background BLE scanner...")
+                self.background_scanner = BleBackgroundScanner()
+                set_background_scanner(self.background_scanner)
+                await self.background_scanner.start()
+                logger.info("Background BLE scanner started successfully")
             
             logger.info("Connecting to MQTT broker...")
             if not self.mqtt_client.connect():
@@ -323,6 +334,11 @@ class UtecHaBridge:
                     "last_status": getattr(lock, 'last_update_time', 0)
                 })
             
+            # Get background scanner metrics if available
+            scanner_metrics = {}
+            if self.background_scanner and config.ble_background_scan_enabled:
+                scanner_metrics = self.background_scanner.get_metrics()
+            
             return {
                 "status": "online" if self.running else "offline",
                 "timestamp": time.time(),
@@ -337,7 +353,8 @@ class UtecHaBridge:
                     "disk_percent": (disk.used / disk.total) * 100,
                     "load_average": load_avg
                 },
-                "locks": lock_details
+                "locks": lock_details,
+                "ble_scanner": scanner_metrics
             }
             
         except Exception as e:
@@ -402,12 +419,19 @@ class UtecHaBridge:
             logger.error(f"Unexpected error in main loop: {e}", exc_info=True)
         finally:
             logger.info("Exiting main loop")
-            self.shutdown()
+            await self.shutdown()
     
-    def shutdown(self):
+    async def shutdown(self):
         """Clean shutdown."""
         logger.info("Shutting down...")
         self.running = False
+        
+        # Stop background scanner if running
+        if self.background_scanner:
+            logger.info("Stopping background BLE scanner...")
+            await self.background_scanner.stop()
+            set_background_scanner(None)
+            logger.info("Background scanner stopped")
         
         # Disconnect MQTT client
         if self.mqtt_client:
@@ -607,6 +631,8 @@ Examples:
     # Performance tuning  
     parser.add_argument('--update-interval', type=int,
                        help='Lock status update interval in seconds (overrides UPDATE_INTERVAL env var, default: 300)')
+    parser.add_argument('--no-background-scan', action='store_true',
+                       help='Disable background BLE scanning (use traditional discovery)')
     
     args = parser.parse_args()
     
@@ -614,6 +640,11 @@ Examples:
     if args.verbose or args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled")
+    
+    # Configure background scanning
+    if args.no_background_scan:
+        config.configure(ble_background_scan_enabled=False)
+        logger.info("Background BLE scanning disabled")
     
     async def async_main():
         bridge = None

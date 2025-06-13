@@ -31,6 +31,7 @@ from ..utils.constants import LOCK_MODE, BOLT_STATUS, BATTERY_LEVEL, CRC8Table
 from ..utils.enums import BleResponseCode, BLECommandCode, DeviceServiceUUID, DeviceKeyUUID
 from ..utils.data import decode_password, bytes_to_int2
 from ..models.capabilities import DeviceDefinition, GenericLock, known_devices
+from .background_scanner import get_background_scanner
 
 
 class OperationTimeout:
@@ -436,7 +437,20 @@ class UtecBleDevice(BaseBleDevice):
                 else:
                     logger.debug(f"[{self.mac_uuid}] Cache expired (age: {current_time - cache_time:.1f}s)")
             
-            # If callback is provided, use it first
+            # Check background scanner first if enabled
+            background_scanner = get_background_scanner()
+            if background_scanner and config.ble_background_scan_enabled:
+                logger.debug(f"[{self.mac_uuid}] Checking background scanner for device")
+                result = background_scanner.get_device(address)
+                if result:
+                    device, adv_data = result
+                    logger.info(f"[{self.mac_uuid}] Device found via background scanner (RSSI: {adv_data.rssi})")
+                    self._scan_cache[address] = (current_time, device)
+                    return device
+                else:
+                    logger.debug(f"[{self.mac_uuid}] Device not in background scanner registry")
+            
+            # If callback is provided, use it next
             if self.async_bledevice_callback:
                 logger.debug(f"[{self.mac_uuid}] Trying device callback")
                 try:
@@ -455,7 +469,7 @@ class UtecBleDevice(BaseBleDevice):
                 except Exception as e:
                     logger.warning(f"[{self.mac_uuid}] Device callback error: {str(e)}")
             
-            # Use our own scanning method
+            # Fall back to traditional scanning
             async with self._scanner_lock:
                 logger.debug(f"[{self.mac_uuid}] Acquired scanner lock")
                 
