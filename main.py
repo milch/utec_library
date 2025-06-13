@@ -661,7 +661,7 @@ Examples:
     if args.no_background_scan:
         config.configure(ble_background_scan_enabled=False)
         logger.info("Background BLE scanning disabled")
-    
+
     async def async_main():
         bridge = None
         
