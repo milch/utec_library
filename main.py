@@ -202,6 +202,14 @@ class UtecHaBridge:
                     success = await lock.async_lock(update=True)
                     if success:
                         logger.info(f"Successfully locked {lock.name}")
+                        # Optimistically update lock state
+                        lock.bolt_status = 2  # Locked
+                        lock.lock_status = 2  # Locked (some locks use this)
+                        # Immediately publish optimistic state
+                        self.mqtt_client.update_lock_state(lock)
+                        logger.info(
+                            f"Published optimistic locked state for {lock.name}"
+                        )
                     else:
                         logger.error(f"Failed to lock {lock.name}")
 
@@ -209,6 +217,14 @@ class UtecHaBridge:
                     success = await lock.async_unlock(update=True)
                     if success:
                         logger.info(f"Successfully unlocked {lock.name}")
+                        # Optimistically update lock state
+                        lock.bolt_status = 1  # Unlocked
+                        lock.lock_status = 1  # Unlocked (some locks use this)
+                        # Immediately publish optimistic state
+                        self.mqtt_client.update_lock_state(lock)
+                        logger.info(
+                            f"Published optimistic unlocked state for {lock.name}"
+                        )
                     else:
                         logger.error(f"Failed to unlock {lock.name}")
                     
@@ -219,8 +235,8 @@ class UtecHaBridge:
             # Update and publish status immediately after command
             await self._update_lock_status(lock)
             self.mqtt_client.update_lock_state(lock)
-            logger.info(f"Status updated and published for {lock.name}")
-            
+            logger.info(f"Confirmed status for {lock.name}")
+
         except Exception as e:
             logger.error(f"Failed to execute {command} on {device_id}: {e}")
             
