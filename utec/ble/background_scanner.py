@@ -20,6 +20,7 @@ from bleak.backends.scanner import AdvertisementData
 
 from ..config import config
 from ..utils.logging import get_logger
+from ..utils.enums import DeviceServiceUUID
 
 logger = get_logger(__name__)
 
@@ -110,6 +111,9 @@ class BleBackgroundScanner:
         # Create scanner with detection callback
         self._scanner = BleakScanner(
             detection_callback=self._detection_callback,
+            service_uuids=[
+                DeviceServiceUUID.LOCK.value,
+            ],
             scanning_mode="passive" if config.ble_scan_passive else "active",
             # bluez=PASSIVE_SCANNER_ARGS if config.ble_scan_passive else None,
         )
@@ -341,4 +345,3 @@ def set_background_scanner(scanner: Optional[BleBackgroundScanner]):
     """Set the global background scanner instance."""
     global _background_scanner
     _background_scanner = scanner
-
