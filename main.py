@@ -764,8 +764,8 @@ Examples:
             return 1
         finally:
             if bridge:
-                bridge.shutdown()
-    
+                await bridge.shutdown()
+
     return asyncio.run(async_main())
 
 
